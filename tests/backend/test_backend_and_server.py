@@ -8,6 +8,7 @@ metadata writes, and the embed=False ingest split (no model needed).
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
@@ -313,6 +314,50 @@ def test_server_ingest_pdf_streams_sse(client, monkeypatch) -> None:
         "described": 0,
         "title": None,
     }
+
+
+def test_server_ingest_pdf_textract_requires_bucket_before_parse(client, monkeypatch) -> None:
+    import datasheet_rag.ingest_pipeline as ip
+    from datasheet_rag.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "s3_bucket", None)
+    parse_called = False
+
+    def should_not_parse(*args, **kwargs):
+        nonlocal parse_called
+        parse_called = True
+        raise AssertionError("Textract preflight must run before PDF parsing")
+
+    monkeypatch.setattr(ip, "parse_pdf_to_graph", should_not_parse)
+    response = client.post(
+        "/ingest-pdf",
+        files={"payload": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+        data={"options": json.dumps({"backend": "textract"})},
+    )
+
+    assert response.status_code == 400
+    assert "RAG_S3_BUCKET" in response.json()["detail"]
+    assert parse_called is False
+
+
+def test_server_ingest_pdf_logs_worker_traceback(client, monkeypatch, caplog) -> None:
+    import datasheet_rag.ingest_pipeline as ip
+
+    def fail_parse(*args, **kwargs):
+        raise RuntimeError("parser exploded")
+
+    monkeypatch.setattr(ip, "parse_pdf_to_graph", fail_parse)
+    caplog.set_level(logging.ERROR, logger="datasheet_rag.server.app")
+    response = client.post(
+        "/ingest-pdf",
+        files={"payload": ("doc.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+
+    assert response.status_code == 200
+    assert '"detail": "parser exploded"' in response.text
+    records = [r for r in caplog.records if r.name == "datasheet_rag.server.app"]
+    assert records
+    assert records[-1].exc_info is not None
 
 
 def test_server_token_required_when_set(conn, monkeypatch) -> None:

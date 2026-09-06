@@ -8,6 +8,7 @@ existing pydantic models (``Chunk``, ``SearchResult``, ``DocMetadata``,
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -61,6 +62,7 @@ if TYPE_CHECKING:
 
 # Vectors are always None post-retrieval; never ship them.
 _CHUNK_EXCLUDE = {"content_embedding", "context_embedding"}
+logger = logging.getLogger(__name__)
 
 
 def _chunk_json(chunk: Chunk) -> dict[str, Any]:
@@ -607,6 +609,20 @@ def build_app() -> FastAPI:
         from datasheet_rag.ingest_pipeline import parse_pdf_to_graph
 
         opts = json.loads(options) if options else {}
+        if str(opts.get("backend", "docling")).lower() == "textract":
+            try:
+                get_settings().require_s3_bucket()
+            except RuntimeError as exc:
+                audit(
+                    request,
+                    be,
+                    action="ingest",
+                    status="error",
+                    project_id=opts.get("project_id"),
+                    error=str(exc),
+                )
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
         pdf_bytes = await payload.read()
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
         tmp.write(pdf_bytes)
@@ -657,6 +673,7 @@ def build_app() -> FastAPI:
                     queue.put_nowait, ("result", result.model_dump(mode="json"))
                 )
             except Exception as exc:  # surfaced to the client as an error event
+                logger.exception("server-side PDF ingest failed")
                 loop.call_soon_threadsafe(queue.put_nowait, ("error", {"detail": str(exc)}))
             finally:
                 # Empty payload rather than None: the sentinel is recognised

@@ -52,6 +52,7 @@ def analyze_document_sync(pdf_path: Path) -> dict[str, Any]:
 def start_analysis(doc_id: str, s3_key: str) -> str:
     """Start an async Textract analysis job. Returns the job ID."""
     settings = get_settings()
+    bucket = settings.require_s3_bucket()
     client = textract_client()
 
     # OutputConfig is intentionally omitted: it requires Textract to have
@@ -60,7 +61,7 @@ def start_analysis(doc_id: str, s3_key: str) -> str:
     params: dict[str, Any] = {
         "DocumentLocation": {
             "S3Object": {
-                "Bucket": settings.s3_bucket,
+                "Bucket": bucket,
                 "Name": s3_key,
             }
         },
