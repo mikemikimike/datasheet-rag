@@ -5,6 +5,12 @@ import pytest
 import datasheet_rag.textract as textract
 
 
+def test_config_template_does_not_advertise_unused_textract_role() -> None:
+    from datasheet_rag.cli import _config_env_lines
+
+    assert not any("RAG_TEXTRACT_ROLE_ARN" in line for line in _config_env_lines())
+
+
 def test_start_analysis_requires_s3_bucket(monkeypatch) -> None:
     from datasheet_rag.config import get_settings
 
